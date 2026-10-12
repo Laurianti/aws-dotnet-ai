@@ -4403,6 +4403,81 @@ public class BedrockChatClientTests
         Assert.Equal(ChatFinishReason.ToolCalls, updates.Last(u => u.FinishReason != null).FinishReason);
     }
 
+    [Theory]
+    [Trait("UnitTest", "BedrockRuntime")]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task IChatClient_GetStreamingResponseAsync_ParameterlessToolCall_EmptyInput_NoExceptionAndEmptyArgs(string toolInput)
+    {
+        // Issue #91: a parameterless tool call streams a single toolUse.input delta of "" from
+        // Anthropic Claude (Amazon Nova sends "{}"). Empty or whitespace-only input must be treated
+        // as an empty argument set, matching the "{}" and non-streaming paths, rather than being
+        // surfaced as a spurious parse-error Exception with null Arguments.
+        IAmazonBedrockRuntime mock = CreateMock(onConverseStreamRequest: request =>
+        {
+            var stream = CreateEventStream(
+                CreateMessageStartEvent(),
+                CreateContentBlockStartEventWithToolUse(0, "tool_empty", "get_time"),
+                CreateContentBlockDeltaEventWithToolUse(0, toolInput),
+                CreateContentBlockStopEvent(0),
+                CreateMessageStopEvent("tool_use"),
+                CreateMetadataEvent(10, 5)
+            );
+            return new ConverseStreamResponse { Stream = new ConverseStreamOutput(stream) };
+        });
+
+        IChatClient chatClient = mock.AsIChatClient("claude");
+
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in chatClient.GetStreamingResponseAsync([new(ChatRole.User, "What time is it?")], cancellationToken: TestContext.Current.CancellationToken))
+        {
+            updates.Add(update);
+        }
+
+        var functionCallUpdate = updates.FirstOrDefault(u => u.Contents.Any(c => c is FunctionCallContent));
+        Assert.NotNull(functionCallUpdate);
+
+        FunctionCallContent functionCall = (FunctionCallContent)functionCallUpdate.Contents.First(c => c is FunctionCallContent);
+        Assert.Equal("get_time", functionCall.Name);
+        Assert.Null(functionCall.Exception);     // no spurious parse error
+        Assert.NotNull(functionCall.Arguments);  // empty (not null) argument set
+        Assert.Empty(functionCall.Arguments!);
+    }
+
+    [Fact]
+    [Trait("UnitTest", "BedrockRuntime")]
+    public async Task IChatClient_GetStreamingResponseAsync_ParameterlessToolCall_NoInputDelta_NoExceptionAndEmptyArgs()
+    {
+        // Issue #91: a tool block with no toolUse.input delta at all (jsonInput is null) must also
+        // yield an empty argument set, not null, consistent with the empty-string case.
+        IAmazonBedrockRuntime mock = CreateMock(onConverseStreamRequest: request =>
+        {
+            var stream = CreateEventStream(
+                CreateMessageStartEvent(),
+                CreateContentBlockStartEventWithToolUse(0, "tool_nodelta", "get_time"),
+                CreateContentBlockStopEvent(0),              // no delta between start and stop
+                CreateMessageStopEvent("tool_use"),
+                CreateMetadataEvent(10, 5)
+            );
+            return new ConverseStreamResponse { Stream = new ConverseStreamOutput(stream) };
+        });
+
+        IChatClient chatClient = mock.AsIChatClient("claude");
+
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in chatClient.GetStreamingResponseAsync([new(ChatRole.User, "What time is it?")], cancellationToken: TestContext.Current.CancellationToken))
+        {
+            updates.Add(update);
+        }
+
+        var functionCallUpdate = updates.FirstOrDefault(u => u.Contents.Any(c => c is FunctionCallContent));
+        Assert.NotNull(functionCallUpdate);
+        FunctionCallContent functionCall = (FunctionCallContent)functionCallUpdate.Contents.First(c => c is FunctionCallContent);
+        Assert.Null(functionCall.Exception);
+        Assert.NotNull(functionCall.Arguments);
+        Assert.Empty(functionCall.Arguments!);
+    }
+
     [Fact]
     [Trait("UnitTest", "BedrockRuntime")]
     public async Task IChatClient_GetStreamingResponseAsync_WithCitation()

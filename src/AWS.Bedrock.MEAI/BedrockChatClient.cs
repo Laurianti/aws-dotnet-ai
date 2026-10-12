@@ -687,21 +687,29 @@ internal sealed partial class BedrockChatClient : IChatClient
     private static Dictionary<string, object?>? ParseToolInputs(string? jsonInput, out Exception? parseError)
     {
         parseError = null;
-        if (jsonInput is not null)
+
+        // A parameterless tool call carries no arguments, but models signal that differently:
+        // Anthropic Claude streams a single toolUse.input delta of "" (empty), while Amazon Nova
+        // sends "{}". Treat empty/whitespace-only input as an empty argument set so both look the
+        // same and match the non-streaming path (which yields an empty dictionary). Without this,
+        // Deserialize("") throws and a valid call is surfaced with a spurious Exception (issue #91).
+        if (string.IsNullOrWhiteSpace(jsonInput))
         {
-            try
-            {
-                return (Dictionary<string, object?>?)JsonSerializer.Deserialize(jsonInput, BedrockJsonContext.DefaultOptions.GetTypeInfo(typeof(Dictionary<string, object?>)));
-            }
-            catch (Exception e)
-            {
-                // Use a generic message and do NOT interpolate jsonInput: the raw, model-generated
-                // tool arguments may contain conversation data, and this message is surfaced on
-                // FunctionCallContent.Exception where callers routinely log it (issue #80). The
-                // underlying parser exception is preserved as the inner exception for diagnostics;
-                // it reports the parse error (e.g. position) without echoing the full payload.
-                parseError = new InvalidOperationException("Unable to parse tool input.", e);
-            }
+            return [];
+        }
+
+        try
+        {
+            return (Dictionary<string, object?>?)JsonSerializer.Deserialize(jsonInput, BedrockJsonContext.DefaultOptions.GetTypeInfo(typeof(Dictionary<string, object?>)));
+        }
+        catch (Exception e)
+        {
+            // Use a generic message and do NOT interpolate jsonInput: the raw, model-generated
+            // tool arguments may contain conversation data, and this message is surfaced on
+            // FunctionCallContent.Exception where callers routinely log it (issue #80). The
+            // underlying parser exception is preserved as the inner exception for diagnostics;
+            // it reports the parse error (e.g. position) without echoing the full payload.
+            parseError = new InvalidOperationException("Unable to parse tool input.", e);
         }
 
         return null;
