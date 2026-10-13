@@ -700,7 +700,11 @@ internal sealed partial class BedrockChatClient : IChatClient
 
         try
         {
-            return (Dictionary<string, object?>?)JsonSerializer.Deserialize(jsonInput, BedrockJsonContext.DefaultOptions.GetTypeInfo(typeof(Dictionary<string, object?>)));
+            // jsonInput is non-null here: the IsNullOrWhiteSpace guard above returned for null.
+            // The null-forgiving operator is needed because string.IsNullOrWhiteSpace is not
+            // annotated with [NotNullWhen(false)] on netstandard2.0/net472, so the compiler can't
+            // infer non-nullness there.
+            return (Dictionary<string, object?>?)JsonSerializer.Deserialize(jsonInput!, BedrockJsonContext.DefaultOptions.GetTypeInfo(typeof(Dictionary<string, object?>)));
         }
         catch (Exception e)
         {
