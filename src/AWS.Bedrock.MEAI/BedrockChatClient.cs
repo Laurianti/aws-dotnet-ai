@@ -690,21 +690,19 @@ internal sealed partial class BedrockChatClient : IChatClient
 
         // A parameterless tool call carries no arguments, but models signal that differently:
         // Anthropic Claude streams a single toolUse.input delta of "" (empty), while Amazon Nova
-        // sends "{}". Treat empty/whitespace-only input as an empty argument set so both look the
-        // same and match the non-streaming path (which yields an empty dictionary). Without this,
-        // Deserialize("") throws and a valid call is surfaced with a spurious Exception (issue #91).
-        if (string.IsNullOrWhiteSpace(jsonInput))
+        // sends "{}". Treat null, empty, or whitespace-only input as an empty argument set so both
+        // look the same and match the non-streaming path (which yields an empty dictionary). Without
+        // this, Deserialize("") throws and a valid call is surfaced with a spurious Exception (#91).
+        // The explicit "is null" check also narrows nullability for the compiler on every target
+        // framework (string.IsNullOrWhiteSpace is not [NotNullWhen]-annotated on netstandard2.0/net472).
+        if (jsonInput is null || string.IsNullOrWhiteSpace(jsonInput))
         {
             return [];
         }
 
         try
         {
-            // jsonInput is non-null here: the IsNullOrWhiteSpace guard above returned for null.
-            // The null-forgiving operator is needed because string.IsNullOrWhiteSpace is not
-            // annotated with [NotNullWhen(false)] on netstandard2.0/net472, so the compiler can't
-            // infer non-nullness there.
-            return (Dictionary<string, object?>?)JsonSerializer.Deserialize(jsonInput!, BedrockJsonContext.DefaultOptions.GetTypeInfo(typeof(Dictionary<string, object?>)));
+            return (Dictionary<string, object?>?)JsonSerializer.Deserialize(jsonInput, BedrockJsonContext.DefaultOptions.GetTypeInfo(typeof(Dictionary<string, object?>)));
         }
         catch (Exception e)
         {
